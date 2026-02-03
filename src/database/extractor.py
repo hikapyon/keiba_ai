@@ -8,80 +8,91 @@ class JraVanExtractor:
         # .env ファイルから設定を読み込む
         load_dotenv()
         
-        # データベース接続情報を作成
         db_user = os.getenv("DB_USER")
         db_pass = os.getenv("DB_PASS")
         db_host = os.getenv("DB_HOST")
         db_port = os.getenv("DB_PORT")
         db_name = os.getenv("DB_NAME")
         
-        # PostgreSQLへの接続エンジンを作成
+        # 接続文字列の作成
         db_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
         self.engine = create_engine(db_url)
 
-    def extract(self, start_year=2021, end_year=2023):
+    def extract(self, start_year=2021, end_year=2025):
         """
-        指定された期間のレース結果と馬情報を結合して取得する
+        jvd_ra（レース情報）と jvd_se（馬ごとの成績）を結合して取得する
         """
         print(f"🔄 データベースから {start_year}年 ～ {end_year}年 のデータを抽出中...")
 
-        # SQLクエリ（命令文）
-        # jvd_race_shosai (レース詳細) と jvd_uma_race (馬ごとの結果) を結合します
+        # SQLクエリ
         query = f"""
         SELECT
-            -- レース情報
-            r.race_id,
-            r.kaisai_nen,       -- 開催年
-            r.kaisai_tsukihi,   -- 開催月日
-            r.keibajo_code,     -- 競馬場コード
-            r.race_bango,       -- レース番号
-            r.kyori,            -- 距離
-            r.track_code,       -- トラック（芝・ダート）
-            r.tenko_code,       -- 天候
-            r.baba_jotai_code,  -- 馬場状態
+            -- レース情報 (jvd_ra)
+            r.kaisai_nen,
+            r.kaisai_tsukihi,
+            r.keibajo_code,
             
-            -- 馬の情報
-            u.umaban,           -- 馬番
-            u.ketto_toroku_bango, -- 血統登録番号（馬ID）
-            u.kyoso_ba_meishou, -- 馬名
-            u.sex_code,         -- 性別
-            u.nengappi,         -- 生年月日（年齢計算用）
-            u.futan_weight,     -- 負担重量
-            u.kishu_code,       -- 騎手コード
-            u.chokyoshi_code,   -- 調教師コード
-            u.ba_taiju,         -- 馬体重
-            u.zogen_sa,         -- 増減差
+            -- ★ここに追加！レースID作成に必要
+            r.kaisai_kai,
+            r.kaisai_nichime,
             
-            -- オッズ・人気
-            u.tansho_odds,      -- 単勝オッズ
-            u.ninki_bango,      -- 人気順
+            r.race_bango,
+            r.kyori,
+            r.track_code,
+            r.tenko_code,
+            r.babajotai_code_shiba,
+            r.babajotai_code_dirt,
             
-            -- ターゲット（予測したいもの）
-            u.kakutei_chakushun -- 確定着順
+            -- 馬の情報 (jvd_se)
+            h.umaban,
+            h.ketto_toroku_bango,
+            h.bamei,
+            h.seibetsu_code,
+            h.futan_juryo,
+            h.kishu_code,
+            h.chokyoshi_code,
+            h.bataiju,
+            h.zogen_sa,
+            h.zogen_fugo,
+            
+            -- オッズ・結果
+            h.tansho_odds,
+            h.tansho_ninkijun,
+            h.kakutei_chakujun
 
-        FROM jvd_race_shosai AS r
-        INNER JOIN jvd_uma_race AS u
-            ON r.race_id = u.race_id
+        FROM jvd_ra AS r
+        INNER JOIN jvd_se AS h
+            -- 結合キー
+            ON r.kaisai_nen = h.kaisai_nen
+            AND r.keibajo_code = h.keibajo_code
+            AND r.kaisai_kai = h.kaisai_kai
+            AND r.kaisai_nichime = h.kaisai_nichime
+            AND r.race_bango = h.race_bango
         
         WHERE
-            -- 指定した期間のデータを取得
             r.kaisai_nen BETWEEN '{start_year}' AND '{end_year}'
-            -- 障害レースを除外（必要に応じて）
-            AND r.track_code IN ('10', '11', '12', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29')
-            -- 完走した馬のみ（中止などを除外）
-            AND u.kakutei_chakushun > 0
+            AND h.kakutei_chakujun ~ '^[0-9]+$'
+            AND CAST(h.kakutei_chakujun AS INTEGER) > 0
 
-        ORDER BY r.kaisai_nen, r.kaisai_tsukihi, r.race_id, u.kakutei_chakushun
+        ORDER BY 
+            r.kaisai_nen, 
+            r.kaisai_tsukihi, 
+            r.race_bango, 
+            CAST(h.kakutei_chakujun AS INTEGER)
         """
         
-        # SQLを実行してPandasのDataFrameにする
-        df = pd.read_sql(query, self.engine)
-        
-        print(f"✅ 抽出完了: {len(df)} 件のデータを取得しました。")
-        return df
+        try:
+            df = pd.read_sql(query, self.engine)
+            print(f"✅ 抽出完了: {len(df)} 件のデータを取得しました。")
+            return df
+            
+        except Exception as e:
+            print("❌ エラーが発生しました。")
+            print(e)
+            return pd.DataFrame()
 
 if __name__ == "__main__":
-    # テスト実行用コード
     extractor = JraVanExtractor()
-    df = extractor.extract(2023, 2023) # 2023年だけ試しに取る
-    print(df.head())
+    df = extractor.extract(2023, 2023)
+    if not df.empty:
+        print(df.head())
