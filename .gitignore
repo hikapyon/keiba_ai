@@ -1,0 +1,11 @@
+# Python系
+__pycache__/
+*.pyc
+venv/
+
+# 機密情報（絶対公開ダメ）
+.env
+
+# データファイル
+data/
+*.csv
